@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>洛克王国能力计算器</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+        body { background-color: #f8f9fa; color: #333; }
+        
+        /* 限制最大宽度，保证在电脑端不拉伸变形 */
+        #app { max-width: 500px; margin: 0 auto; padding: 15px; min-height: 100vh; background-color: #f8f9fa; box-shadow: 0 0 15px rgba(0,0,0,0.05); }
+
+        .card { background: #fff; padding: 15px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); margin-bottom: 15px; }
+        .row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+        .row:last-child { margin-bottom: 0; }
+        
+        select, input, button { outline: none; border: 1px solid #ddd; font-size: 14px; padding: 8px; border-radius: 6px; }
+        select { flex: 1; margin-left: 10px; background: #eee; border: none; }
+        input[type="number"] { -moz-appearance: textfield; } /* 隐藏PC端数字输入框的上下箭头 */
+        input[type="number"]::-webkit-inner-spin-button, input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+        
+        .name-input { flex: 1; border: none; border-bottom: 1px solid #ddd; border-radius: 0; padding: 5px; margin-right: 10px; }
+        .save-btn { background: #007aff; color: #fff; border: none; font-weight: bold; padding: 8px 15px; }
+        
+        .history-list { display: flex; overflow-x: auto; white-space: nowrap; padding-bottom: 5px; margin-bottom: 15px; }
+        .history-list::-webkit-scrollbar { display: none; } /* 隐藏滚动条 */
+        .history-item { display: inline-block; background: #e1f5fe; padding: 5px 12px; border-radius: 20px; margin-right: 10px; font-size: 13px; color: #0288d1; cursor: pointer; }
+        .del-icon { margin-left: 8px; color: #ff5252; font-weight: bold; cursor: pointer; }
+
+        .table-header, .stat-row { display: flex; align-items: center; padding: 12px 0; border-bottom: 1px solid #f0f0f0; }
+        .stat-row:last-child { border-bottom: none; }
+        .cell-name { width: 50px; font-weight: bold; font-size: 14px; }
+        .cell-input { flex: 1; text-align: center; border: none; border-bottom: 1px solid #eee; margin: 0 5px; border-radius: 0; font-size: 16px; padding: 5px; }
+        .cell-result { width: 70px; text-align: right; color: #333; font-size: 18px; font-weight: bold; }
+
+        .text-red { color: #ff5252; }
+        .text-blue { color: #448aff; }
+        .bold { color: #007aff; }
+
+        .footer { margin-top: 30px; text-align: center; }
+        .reset-btn { background: #fff; border: 1px solid #ddd; color: #666; padding: 8px 20px; margin-bottom: 10px; cursor: pointer; }
+        .tip { font-size: 12px; color: #999; display: block; }
+    </style>
+</head>
+<body>
+
+<div id="app">
+    <div class="card">
+        <div class="row">
+            <span class="label">选择性格：</span>
+            <select v-model="natureIndex">
+                <option v-for="(nature, index) in natures" :value="index" :key="index">
+                    {{ nature.name }}
+                </option>
+            </select>
+        </div>
+        
+        <div class="row" style="margin-top: 15px;">
+            <input class="name-input" v-model="petName" placeholder="输入精灵名称以保存" />
+            <button class="save-btn" @click="savePet">保存数据</button>
+        </div>
+    </div>
+
+    <div class="history-list" v-if="Object.keys(savedPets).length > 0">
+        <div class="history-item" v-for="(data, name) in savedPets" :key="name" @click="loadPet(name)">
+            {{ name }}
+            <span class="del-icon" @click.stop="deletePet(name)">×</span>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="table-header">
+            <span class="cell-name">属性</span>
+            <span style="flex:1; text-align:center; font-size: 14px; color: #666;">种族值</span>
+            <span style="flex:1; text-align:center; font-size: 14px; color: #666;">个体值</span>
+            <span class="cell-result" style="font-size: 14px; color: #666;">60级最终</span>
+        </div>
+
+        <div class="stat-row" v-for="(label, key) in statLabels" :key="key">
+            <span class="cell-name" :class="getNatureClass(key)">{{ label }}</span>
+            <input class="cell-input" type="number" v-model.number="baseStats[key]" placeholder="0" />
+            <input class="cell-input" type="number" v-model.number="ivs[key]" placeholder="0-10" maxlength="2" />
+            <span class="cell-result bold">{{ calculateResult(key) }}</span>
+        </div>
+    </div>
+
+    <div class="footer">
+        <button class="reset-btn" @click="reset">清空面板</button>
+        <span class="tip">努力值默认等于等级(60) | 数据自动保存在本地</span>
+    </div>
+</div>
+
+<script>
+const { createApp, ref, reactive, onMounted } = Vue;
+
+createApp({
+    setup() {
+        const statLabels = { hp: '精力', atk: '物攻', def: '防御', matk: '魔攻', mdef: '魔抗', spd: '速度' };
+        
+        const natures = [
+            { name: '实干 (不加减)', plus: '', minus: '' },
+            { name: '固执 (+物攻 -魔攻)', plus: 'atk', minus: 'matk' },
+            { name: '保守 (+魔攻 -物攻)', plus: 'matk', minus: 'atk' },
+            { name: '开朗 (+速度 -魔攻)', plus: 'spd', minus: 'matk' },
+            { name: '胆小 (+速度 -物攻)', plus: 'spd', minus: 'atk' },
+            { name: '调皮 (+物攻 -魔抗)', plus: 'atk', minus: 'mdef' },
+            { name: '慎重 (+魔抗 -魔攻)', plus: 'mdef', minus: 'matk' }
+        ];
+
+        const natureIndex = ref(0);
+        const petName = ref('');
+        const baseStats = reactive({ hp: '', atk: '', def: '', matk: '', mdef: '', spd: '' });
+        const ivs = reactive({ hp: '', atk: '', def: '', matk: '', mdef: '', spd: '' });
+        const savedPets = ref({});
+
+        // 加载本地存储
+        onMounted(() => {
+            const data = localStorage.getItem('roco_saved_pets');
+            if (data) savedPets.value = JSON.parse(data);
+        });
+
+        const getNatureClass = (key) => {
+            const nature = natures[natureIndex.value];
+            if (nature.plus === key) return 'text-red';
+            if (nature.minus === key) return 'text-blue';
+            return '';
+        };
+
+        const calculateResult = (key) => {
+            const base = Number(baseStats[key]) || 0;
+            const iv = Number(ivs[key]) || 0;
+            const level = 60;
+            const effort = 60; 
+            
+            if (base === 0) return '-';
+
+            let natureMod = 1.0;
+            const nature = natures[natureIndex.value];
+            if (nature.plus === key) natureMod = 1.1;
+            if (nature.minus === key) natureMod = 0.9;
+
+            let res = 0;
+            if (key === 'hp') {
+                res = Math.floor((base * 2 + iv * level + effort) * level / 100) + level + 10;
+            } else {
+                res = Math.floor((Math.floor((base * 2 + iv * level + effort) * level / 100) + 5) * natureMod);
+            }
+            return res;
+        };
+
+        const savePet = () => {
+            if (!petName.value) return alert('请输入精灵名称');
+            savedPets.value[petName.value] = { ...baseStats };
+            localStorage.setItem('roco_saved_pets', JSON.stringify(savedPets.value));
+            alert('保存成功！');
+        };
+
+        const loadPet = (name) => {
+            const data = savedPets.value[name];
+            Object.assign(baseStats, data);
+            petName.value = name;
+        };
+
+        const deletePet = (name) => {
+            if(confirm(`确定删除 ${name} 吗？`)){
+                delete savedPets.value[name];
+                localStorage.setItem('roco_saved_pets', JSON.stringify(savedPets.value));
+            }
+        };
+
+        const reset = () => {
+            Object.keys(baseStats).forEach(k => baseStats[k] = '');
+            Object.keys(ivs).forEach(k => ivs[k] = '');
+            petName.value = '';
+            natureIndex.value = 0;
+        };
+
+        return {
+            statLabels, natures, natureIndex, petName, baseStats, ivs, savedPets,
+            getNatureClass, calculateResult, savePet, loadPet, deletePet, reset
+        };
+    }
+}).mount('#app');
+</script>
+
+</body>
+</html>
